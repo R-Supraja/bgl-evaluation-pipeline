@@ -9,7 +9,7 @@ The project evaluates how different preprocessing and feature-construction strat
 - Datasets (VitalDB, MUST)
 - Processing pipelines (Zeynali et al. [1], Gupta et al. [2], Islam et al. [3], Alghlayini et al. [4], Prabha et al. [5])
 - Model families (XGBoost, PLS, TinyCNN, ResNet34)
-- Evaluation modes (cross-validation, multi-session CV, random holdout)
+- Evaluation modes (leave some participant out cross-validation, multi-session cross-validation, random holdout)
 
 ## 2. Repository Scope
 The pipeline is organized as a modular workflow:
