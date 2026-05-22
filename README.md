@@ -97,6 +97,9 @@ If this repository is used in academic work, please cite:
 ```text
 ```
 
+## 10. Contribution
+We encourage all the researchers in the field of PPG-based blood glucose level estimation to utilise this pipeline to evalute your models and add new datasets to this pipeline. If you would like to contribute to this pipeline, feel free to raise a pull request.
+
 
 ## References
 1. Zeynali, M., Alipour, K., Tarvirdizadeh, B., & Ghamari, M. (2025). Non-invasive blood glucose monitoring using PPG signals with various deep learning models and implementation using TinyML. Scientific Reports, 15(1), 581.
