@@ -128,6 +128,14 @@ PROCESSORS = {
             },
             "force_overwrite": False,
         },
+        "global_mean_proc": {
+            "type": "global_mean_processor",
+            "config": {
+                "progress": DEFAULT_PROGRESS,
+                "log_level": DEFAULT_LOG_LEVEL,
+            },
+            "force_overwrite": False,
+        },
     }
 BUILDERS = {
         "sen_gupta_builder": {
@@ -203,6 +211,14 @@ BUILDERS = {
                 "n_frames": 8,
                 "n_mels": 26,
                 "n_mfcc": 13,
+                "progress": DEFAULT_PROGRESS,
+                "log_level": DEFAULT_LOG_LEVEL,
+            },
+            "force_overwrite": False,
+        },
+        "global_mean_builder": {
+            "type": "global_mean_builder",
+            "config": {
                 "progress": DEFAULT_PROGRESS,
                 "log_level": DEFAULT_LOG_LEVEL,
             },
@@ -623,8 +639,37 @@ PRABHA_PLAN = [
         "force_train": False,
     },
 ]
-ALL_PLANS = ISLAM_PLAN + GUPTA_PLAN + ALGHLAYINI_PLAN + PRABHA_PLAN + ZEYNALI_PLAN
-PIPELINE = {
+
+GLOBAL_MEAN_PLAN = [
+    {
+        "datasets": ["vitaldb_100", "must"],
+        "processors": ["global_mean_proc"],
+        "builders": ["global_mean_builder"],
+        "models": ["mean_baseline"],
+        "mode": "train_cv",
+        "force_train": False,
+    },
+    {
+        "datasets": ["vitaldb_100", "must"],
+        "processors": ["global_mean_proc"],
+        "builders": ["global_mean_builder"],
+        "models": ["mean_baseline"],
+        "mode": "train_cv_multi_session",
+        "force_train": False,
+    },
+    {
+        "datasets": ["vitaldb_100", "must"],
+        "processors": ["global_mean_proc"],
+        "builders": ["global_mean_builder"],
+        "models": ["mean_baseline"],
+        "mode": "train_single_random",
+        "split_ratio": RANDOM_SPLIT_RATIO,
+        "force_train": False,
+    },
+]
+
+ALL_PLANS = ISLAM_PLAN + GUPTA_PLAN + ALGHLAYINI_PLAN + PRABHA_PLAN + ZEYNALI_PLAN + GLOBAL_MEAN_PLAN
+BENCHMARK = {
     "name": "bench",
     "artifacts_root": "artifacts/bench",
     "datasets": DATASETS,

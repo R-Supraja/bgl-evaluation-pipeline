@@ -4,6 +4,8 @@ from . import (
     prabha_processor,
     sengupta_processor,
     zeynali_processor,
+    global_mean_processor,
+
 )
 from .base import PROCESSORS
 

@@ -4,12 +4,13 @@ from . import (
     prabha_builder,
     sengupta_builder,
     zeynali_builder,
+    global_mean_builder,
+
 )
 from .base import BUILDERS
 
 
 def get_builder(config):
-    """Instantiate a registered builder from benchmark configuration."""
     b_type = config.get("type")
 
     if b_type not in BUILDERS:
