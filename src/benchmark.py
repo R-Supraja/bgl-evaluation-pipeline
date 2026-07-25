@@ -69,7 +69,7 @@ def get_model_filename(model_type: str) -> str:
     """Get the model filename based on model type."""
     if model_type in KERAS_MODEL_TYPES:
         return "final/best_model.keras"
-    if model_type == "pls":
+    if model_type in ("pls", "random_forest"):
         return "final/best_model.joblib"
     return "final/best_model.json"
 
@@ -516,16 +516,24 @@ class Benchmark:
             logger.log("No results to report", level="warning")
             return pd.DataFrame()
 
-        rows = [
-            {
+        rows = []
+        for r in results:
+            row = {
                 "Model": r.exp_name,
                 "Dataset": r.dataset_name,
                 "Mode": r.mode,
-                **r.summary_mean,
-                "model_size (KB)": r.model_size,
             }
-            for r in results
-        ]
+
+            for metric, mean_value in r.summary_mean.items():
+                row[metric] = mean_value
+                if metric in r.summary_std:
+                    row[f"{metric}_std"] = r.summary_std[metric]
+
+            for metric, std_value in r.summary_std.items():
+                row.setdefault(f"{metric}_std", std_value)
+
+            row["model_size (KB)"] = r.model_size
+            rows.append(row)
 
         df = pd.DataFrame(rows)
 
@@ -749,7 +757,12 @@ def _get_base_model_dir(
 
 
 def run_task_train(
-    manager: ArtifactManager, task: Task, builder_path: Path, run_dir: Path
+    manager: ArtifactManager,
+    task: Task,
+    builder_path: Path,
+    run_dir: Path,
+    *,
+    force: bool = False,
 ) -> None:
     logger = ProgressReporter()
     final_params = task.config.model_cfg.get("config", {}).get("params", {}).copy()
@@ -771,6 +784,7 @@ def run_task_train(
             "params": final_params,
             "artifact_dir": str(run_dir),
             "warm_start_dir": str(warm_model_run_dir) if warm_model_run_dir else None,
+            "force_retrain": force,
         },
     }
 
@@ -857,15 +871,16 @@ def run_task(root: Path, task: Task) -> Optional[BenchmarkResult]:
 
         if force or not success_file.exists():
 
-            if results_file.exists():
+            if results_file.exists() and not success_file.exists():
                 logger.log(
-                    f"[MODEL] Found incomplete result file (no .success), removing: {results_file.name}",
+                    f"[MODEL] Found results.pkl without .success in "
+                    f"{run_dir.name} - previous run likely crashed. "
+                    f"Resuming from checkpoints (or retraining if force).",
                     level="warning",
                 )
-                results_file.unlink()
 
             if task.mode.startswith("train_"):
-                run_task_train(manager, task, builder_path, run_dir)
+                run_task_train(manager, task, builder_path, run_dir, force=force)
             elif task.mode == "eval":
                 run_task_eval(manager, task, builder_path, run_dir)
             else:

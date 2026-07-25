@@ -282,8 +282,206 @@ class RandomSegmentSplitter(DataSplitter):
         }
 
 
+class RandomSegmentCVSplitter(DataSplitter):
+    """
+    K-Fold Cross-Validation purely on the segment (row) level.
+    Ignores whether segments belong to the same case or subject.
+    """
+
+    def __init__(self, n_splits: int = 5, val_ratio: float = 0.15):
+        self.n_splits = n_splits
+        self.val_ratio = val_ratio
+        self.logger = ProgressReporter()
+
+    def _make_split_by_indices(
+        self, dataset: Dataset, indices: np.ndarray
+    ) -> DataSplit:
+        """Helper to create a DataSplit based on row indices."""
+        return DataSplit(
+            X=dataset.X[indices],
+            y=dataset.y[indices],
+            subject_ids=dataset.subject_ids[indices],
+            case_ids=dataset.case_ids[indices],
+        )
+
+    def split(self, dataset: Dataset, seed: Optional[int] = 42) -> Dict[str, FoldData]:
+        unique_subjects = np.unique(dataset.subject_ids)
+
+        self.logger.log(f"Splitter Stats:", level="info")
+        self.logger.log(f"  - Total subjects: {len(unique_subjects)}", level="info")
+        self.logger.log(f"  - Total segments: {dataset.n_samples}", level="info")
+
+        rng = np.random.default_rng(seed)
+
+        all_indices = np.arange(dataset.n_samples)
+        rng.shuffle(all_indices)
+
+        chunks = np.array_split(all_indices, self.n_splits)
+        folds = {}
+        features = dataset.metadata.get("feature_names", [])
+
+        for i in range(self.n_splits):
+            test_idx = chunks[i]
+            train_val_idx = np.concatenate([c for j, c in enumerate(chunks) if j != i])
+
+            if self.val_ratio > 0.0:
+                n_val = max(1, int(len(train_val_idx) * self.val_ratio))
+            else:
+                n_val = 0
+
+            val_idx = train_val_idx[:n_val]
+            train_idx = train_val_idx[n_val:]
+
+            folds[f"fold_{i}"] = FoldData(
+                train=self._make_split_by_indices(dataset, train_idx),
+                val=self._make_split_by_indices(dataset, val_idx),
+                test=self._make_split_by_indices(dataset, test_idx),
+                name=f"fold_{i}",
+                feature_names=features,
+            )
+        return folds
+
+
+class LatestThreeSessionSplitter(DataSplitter):
+    """Select participants with 3+ sessions, take latest 3, create 3 folds.
+
+    Fold i uses session i (0-indexed, sorted ascending) as test,
+    the other 2 sessions as train. No validation split.
+    """
+
+    def __init__(self, n_splits: int = 3, val_ratio: float = 0.0):
+        self.n_splits = n_splits
+        self.val_ratio = val_ratio
+        self.logger = ProgressReporter()
+
+    @staticmethod
+    def _detect_roles(dataset: Dataset) -> tuple[str, str]:
+        n_subjects = len(np.unique(dataset.subject_ids))
+        n_cases = len(np.unique(dataset.case_ids))
+
+        subj_to_cases = {}
+        for subj in np.unique(dataset.subject_ids):
+            subj_to_cases[subj] = len(np.unique(dataset.case_ids[dataset.subject_ids == subj]))
+
+        case_to_subjs = {}
+        for cid in np.unique(dataset.case_ids):
+            case_to_subjs[cid] = len(np.unique(dataset.subject_ids[dataset.case_ids == cid]))
+
+        mean_cases_per_subj = float(np.mean(list(subj_to_cases.values())))
+        mean_subjs_per_case = float(np.mean(list(case_to_subjs.values())))
+
+        # The participant field has FEWER unique values and a higher mean sessions per participant
+        if n_subjects < n_cases or (n_subjects == n_cases and mean_cases_per_subj > mean_subjs_per_case):
+            return "subject", "case"
+        else:
+            return "case", "subject"
+
+    def _make_split(self, dataset: Dataset, participant_ids: np.ndarray, role: str) -> DataSplit:
+        if role == "subject":
+            mask = np.isin(dataset.subject_ids, participant_ids)
+        else:
+            mask = np.isin(dataset.case_ids, participant_ids)
+        return DataSplit(
+            X=dataset.X[mask],
+            y=dataset.y[mask],
+            subject_ids=dataset.subject_ids[mask],
+            case_ids=dataset.case_ids[mask],
+        )
+
+    def _session_values(self, dataset: Dataset, participant_id, role: str) -> np.ndarray:
+        if role == "subject":
+            mask = dataset.subject_ids == participant_id
+            return np.unique(dataset.case_ids[mask])
+        else:
+            mask = dataset.case_ids == participant_id
+            return np.unique(dataset.subject_ids[mask])
+
+    def split(self, dataset: Dataset, seed: Optional[int] = 42) -> Dict[str, FoldData]:
+        role, _ = self._detect_roles(dataset)
+        participant_col = dataset.subject_ids if role == "subject" else dataset.case_ids
+        unique_participants = np.unique(participant_col)
+
+        self.logger.log(f"Splitter Stats (LatestThreeSession):", level="info")
+        self.logger.log(f"  - Role: participant={role}, session={'case' if role == 'subject' else 'subject'}", level="info")
+        self.logger.log(f"  - Total raw participants: {len(unique_participants)}", level="info")
+
+        eligible_participants = []
+        participant_sessions: list[tuple] = []
+
+        for pid in unique_participants:
+            sessions = self._session_values(dataset, pid, role)
+            if len(sessions) >= 3:
+                eligible_participants.append(pid)
+                sorted_sessions = np.sort(sessions)
+                participant_sessions.append((pid, sorted_sessions[-3:]))
+
+        self.logger.log(f"  - Participants with 3+ sessions: {len(eligible_participants)}", level="info")
+
+        if not eligible_participants:
+            raise ValueError("No participants have at least 3 sessions; cannot run 3-fold CV")
+
+        features = dataset.metadata.get("feature_names", [])
+        folds = {}
+
+        for fold_idx in range(self.n_splits):
+            fold_test_mask = np.zeros(dataset.n_samples, dtype=bool)
+            fold_train_mask = np.zeros(dataset.n_samples, dtype=bool)
+
+            for pid, sessions in participant_sessions:
+                test_session = sessions[fold_idx]
+                train_sessions = [s for i, s in enumerate(sessions) if i != fold_idx]
+
+                if role == "subject":
+                    # participant=subject_id, session=case_id
+                    pid_mask = dataset.subject_ids == pid
+                    for sid in sessions:
+                        s_mask = pid_mask & (dataset.case_ids == sid)
+                        if sid == test_session:
+                            fold_test_mask |= s_mask
+                        else:
+                            fold_train_mask |= s_mask
+                else:
+                    # participant=case_id, session=subject_id
+                    pid_mask = dataset.case_ids == pid
+                    for sid in sessions:
+                        s_mask = pid_mask & (dataset.subject_ids == sid)
+                        if sid == test_session:
+                            fold_test_mask |= s_mask
+                        else:
+                            fold_train_mask |= s_mask
+
+            features = dataset.metadata.get("feature_names", [])
+
+            fold_name = f"fold_{fold_idx}"
+            folds[fold_name] = FoldData(
+                train=DataSplit(
+                    X=dataset.X[fold_train_mask],
+                    y=dataset.y[fold_train_mask],
+                    subject_ids=dataset.subject_ids[fold_train_mask],
+                    case_ids=dataset.case_ids[fold_train_mask],
+                ),
+                val=DataSplit(
+                    X=np.empty((0, dataset.X.shape[1]), dtype=dataset.X.dtype),
+                    y=np.empty(0, dtype=dataset.y.dtype),
+                    subject_ids=np.empty(0, dtype=dataset.subject_ids.dtype),
+                    case_ids=np.empty(0, dtype=dataset.case_ids.dtype),
+                ),
+                test=DataSplit(
+                    X=dataset.X[fold_test_mask],
+                    y=dataset.y[fold_test_mask],
+                    subject_ids=dataset.subject_ids[fold_test_mask],
+                    case_ids=dataset.case_ids[fold_test_mask],
+                ),
+                name=fold_name,
+                feature_names=features,
+            )
+
+        return folds
+
+
 class HybridMultiSessionSplitter(DataSplitter):
     """Multi-session subject CV with per-subject personalization training case."""
+
     def __init__(self, n_splits: int = 5, val_ratio: float = 0.15):
         self.n_splits = n_splits
         self.val_ratio = val_ratio

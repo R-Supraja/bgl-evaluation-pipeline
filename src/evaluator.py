@@ -202,7 +202,17 @@ class Evaluator:
         metrics.update({f"Zone {z}": float(ceg.get(f"Zone {z}", 0.0)) for z in "ABCDE"})
         return metrics
 
-    def log_results(self, name: str, y_true, y_pred, case_ids) -> ModelMetrics:
+    def log_results(
+        self,
+        name: str,
+        y_true,
+        y_pred,
+        case_ids,
+        *,
+        history=None,
+        val_rmse=None,
+        seed=None,
+    ) -> ModelMetrics:
         """Evaluates one fold: computes metrics, stores predictions, and checkpoints the result."""
         yt, yp = self._align(y_true, y_pred)
         cids = np.asarray(case_ids).ravel()[: len(yt)]
@@ -211,21 +221,33 @@ class Evaluator:
             return ModelMetrics()
 
         fold_metrics = self._calculate_metrics_dict(yt, yp)
-        entry = self.result.add_fold_summary(name, fold_metrics, yt, yp, cids)
 
         unique_cids = np.unique(cids)
+        case_metrics = {}
         for cid in unique_cids:
             mask = cids == cid
-            case_metrics = self._calculate_metrics_dict(yt[mask], yp[mask])
-            self.result.add_case_summary(name, int(cid), case_metrics)
+            case_metrics[int(cid)] = self._calculate_metrics_dict(yt[mask], yp[mask])
 
-        try:
-            checkpoint_path = self.artifact_dir / f"results_checkpoint_{name}.pkl"
-            self.result.save(checkpoint_path)
-        except:
-            pass
+        payload = {
+            "name": name,
+            "metrics": fold_metrics,
+            "case_metrics": case_metrics,
+            "predictions": {
+                "y_true": yt.astype(np.float32),
+                "y_pred": yp.astype(np.float32),
+                "case_ids": cids.astype(np.int32),
+            },
+            "history": history or {},
+            "val_rmse": (float(val_rmse) if val_rmse is not None else None),
+            "seed": (int(seed) if seed is not None else None),
+        }
 
-        return entry
+        checkpoint_path = self.artifact_dir / f"results_checkpoint_{name}.pkl"
+        tmp = checkpoint_path.with_suffix(".pkl.tmp")
+        joblib.dump(payload, tmp, compress=3)
+        tmp.replace(checkpoint_path)
+
+        return ModelMetrics.from_dict(fold_metrics)
 
     def save_report(
         self,
@@ -237,8 +259,56 @@ class Evaluator:
         include_predictions: bool = True,
         best_model_size_kb: Optional[float] = None,
         compress: Optional[Union[int, bool]] = 3,
+        expected_folds_count: Optional[int] = None,
     ) -> Path:
         """Aggregates fold metrics into a summary and persists the full Result to disk."""
+
+        files = sorted(self.artifact_dir.glob("results_checkpoint_*.pkl"))
+
+        self.result.fold_metrics = {}
+        self.result.case_metrics = {}
+        self.result.predictions = {}
+
+        found = set()
+        for fp in files:
+            try:
+                payload = joblib.load(fp)
+            except Exception as e:
+                raise RuntimeError(
+                    f"[report] Corrupt per-fold checkpoint {fp}: {e}. "
+                    f"Refusing to write an incomplete summary."
+                )
+
+            name = payload["name"]
+            found.add(name)
+
+            preds = payload["predictions"]
+
+            self.result.add_fold_summary(
+                name,
+                payload["metrics"],
+                preds["y_true"],
+                preds["y_pred"],
+                preds["case_ids"],
+            )
+
+            for cid, cm in payload["case_metrics"].items():
+                self.result.add_case_summary(name, int(cid), cm)
+
+            if payload.get("history"):
+                self.result.training_curves[name] = payload["history"]
+
+        if not include_predictions:
+            self.result.predictions = {}
+
+        if expected_folds_count is not None:
+            if len(found) != expected_folds_count:
+                raise RuntimeError(
+                    f"[report] Final summary INCOMPLETE: found {len(found)} fold(s) "
+                    f"{sorted(found)}, expected {expected_folds_count}. Refusing to "
+                    f"write a CV mean over the wrong number of folds. Check the "
+                    f"results_checkpoint_*.pkl files in {self.artifact_dir}."
+                )
 
         rows = []
         for fold, mm in self.result.fold_metrics.items():

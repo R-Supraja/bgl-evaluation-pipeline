@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import random
 import shutil
@@ -11,6 +12,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import tensorflow as tf
 
+from src.evaluator import Evaluator
 from src.models.core.model import Model
 from src.models.dataset.base import Dataset, FoldData
 from src.models.dataset.filter import TargetRangeFilter
@@ -19,6 +21,8 @@ from src.models.dataset.splitter import (
     CaseWiseSingleSplitter,
     CrossValidationSplitter,
     HybridMultiSessionSplitter,
+    LatestThreeSessionSplitter,
+    RandomSegmentCVSplitter,
     RandomSegmentSplitter,
     SingleSplitter,
 )
@@ -92,12 +96,54 @@ class BaseModelRunner(ProgressReporter, ABC):
             init_from_dir=warm_model_path,
         )
 
+    def _ckpt_path(self, fold_idx: int, kind: str) -> Path:
+        """Path of a fold marker"""
+        d = Path(self.config["artifact_dir"]) / "folds" / "_checkpoints"
+        return d / f"fold_{fold_idx}_{kind}.json"
+
+    def _write_ckpt(self, path: Path, payload: dict) -> None:
+        """Writes a checkpoint marker"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+
+        def _json_safe(o):
+            if isinstance(o, np.floating):
+                return float(o)
+            if isinstance(o, np.integer):
+                return int(o)
+            if isinstance(o, np.ndarray):
+                return o.tolist()
+            return str(o)
+
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, default=_json_safe)
+        tmp.replace(path)
+
+    def _verify_ckpt_seed(self, info: dict, fold_idx: int) -> None:
+        """Guards against a silent resume with a different seed"""
+        stored = info.get("seed")
+        current = int(self.params.get("seed", -1))
+        if stored is not None and stored != current:
+            raise RuntimeError(
+                f"[checkpoint] Seed mismatch at fold {fold_idx}: checkpoint has "
+                f"seed={stored}, current run has seed={current}."
+            )
+        if current < 0:
+            self.log(
+                f"[checkpoint] WARNING: resuming fold {fold_idx} in random mode "
+                f"(seed=-1) - fold splits are not reproducible, resume "
+                f"correctness is not guaranteed.",
+                level="info",
+            )
+
     def _run_cv(
-        self, folds: Dict[str, FoldData], trainer: Trainer, evaluator: Any
+        self, folds: Dict[str, FoldData], trainer: Trainer, evaluator: Evaluator
     ) -> RunResult:
         """Executes cross-validation on all dataset folds."""
         best_val_rmse = float("inf")
         best_fold = ""
+
+        force = bool(self.config.get("force_retrain", False))
 
         fold_items = list(folds.items())
         it = range(len(fold_items))
@@ -107,24 +153,115 @@ class BaseModelRunner(ProgressReporter, ABC):
         for fold_idx in it:
             fold_name, fold = fold_items[fold_idx]
 
-            # Train
-            trained_model, train_result = trainer.train_fold(fold, fold_idx)
-            evaluator.result.training_curves[fold_name] = train_result.history
+            trained_ckpt = self._ckpt_path(fold_idx, "trained")
+            eval_pkl = self.config["artifact_dir"]
+            eval_pkl = (
+                Path(self.config["artifact_dir"])
+                / f"results_checkpoint_{fold_name}.pkl"
+            )
+
+            # Case 1: fold fully done -> skip entirely
+            if not force and eval_pkl.exists():
+                self.log(
+                    f"[checkpoint] Fold {fold_idx} already evaluated - skipping.",
+                    level="info",
+                )
+
+                import joblib
+
+                payload = joblib.load(eval_pkl)
+                self._verify_ckpt_seed(payload, fold_idx)
+                vr = payload.get("val_rmse")
+                if vr is not None and vr < best_val_rmse:
+                    best_val_rmse = vr
+                    best_fold = fold_name
+                continue
+
+            fold_path = Path(self.config["artifact_dir"]) / "folds" / f"fold_{fold_idx}"
+            probe = self._make_model()
+            model_artifact_ok = probe.load(fold_path)
+
+            # Case 2: Training: fresh OR restored from checkpoint
+            if not force and trained_ckpt.exists() and model_artifact_ok:
+                info = json.loads(trained_ckpt.read_text(encoding="utf-8"))
+                self._verify_ckpt_seed(info, fold_idx)
+                self.log(
+                    f"[checkpoint] Fold {fold_idx} already trained - "
+                    f"resuming at test prediction.",
+                    level="info",
+                )
+                val_rmse = info["val_rmse"]
+                history = info.get("history", {})
+            else:
+                if not force and trained_ckpt.exists() and not model_artifact_ok:
+                    self.log(
+                        f"[checkpoint] Fold {fold_idx}: model is missing - retraining.",
+                        level="info",
+                    )
+                    trained_ckpt.unlink()
+                del probe
+
+                _, train_result = trainer.train_fold(fold, fold_idx)
+                val_rmse = train_result.val_rmse
+                history = train_result.history
+
+                self._write_ckpt(
+                    trained_ckpt,
+                    {
+                        "val_rmse": float(val_rmse),
+                        "history": history,
+                        "model_size_kb": getattr(train_result, "model_size_kb", 0.0),
+                        "seed": int(self.params.get("seed", -1)),
+                    },
+                )
+
+            evaluator.result.training_curves[fold_name] = history
 
             if fold.test.X.shape[0] != 0:
-                # Evaluate
-                y_pred = trained_model.predict(fold.test.X)
+
+                # TODO: add to return value for train_fold..
+                fold_path = (
+                    Path(self.config["artifact_dir"]) / "folds" / f"fold_{fold_idx}"
+                )
+
+                self.log(
+                    f"Reloading model from {fold_path} for test prediction...",
+                    level="info",
+                )
+
+                eval_model = self._make_model()
+
+                if not eval_model.load(fold_path):
+                    raise FileNotFoundError(
+                        f"Could not reload fold model from {fold_path}.keras"
+                    )
+                self.log("Reload successful.", level="info")
+
+                self.log(
+                    f"Start predicting the test set ({fold.test.X.shape[0]} samples).",
+                    level="info",
+                )
+                y_pred = eval_model.predict(fold.test.X)
+                self.log("Prediction done. Logging results.", level="info")
+
                 evaluator.log_results(
                     name=fold_name,
                     y_true=fold.test.y,
                     y_pred=y_pred,
                     case_ids=fold.test.case_ids,
+                    history=history,
+                    val_rmse=val_rmse,
+                    seed=int(self.params.get("seed", -1)),
                 )
 
-                # Track best performance
-                if train_result.val_rmse < best_val_rmse:
-                    best_val_rmse = train_result.val_rmse
-                    best_fold = fold_name
+                self.log(f"[checkpoint] Fold {fold_idx} completed.", level="info")
+
+                del eval_model
+                gc.collect()
+
+            if val_rmse < best_val_rmse:
+                best_val_rmse = val_rmse
+                best_fold = fold_name
 
         return RunResult(best_fold=best_fold, best_val_rmse=best_val_rmse)
 
@@ -238,7 +375,9 @@ class BaseModelRunner(ProgressReporter, ABC):
                 "train_cv_casewise": (CaseWiseCrossValidationSplitter, self._run_cv),
                 "train_single_casewise": (CaseWiseSingleSplitter, self._run_single),
                 "train_single_random": (RandomSegmentSplitter, self._run_single),
+                "train_cv_random": (RandomSegmentCVSplitter, self._run_cv),
                 "train_cv_multi_session": (HybridMultiSessionSplitter, self._run_cv),
+                "train_cv_three_latest": (LatestThreeSessionSplitter, self._run_cv),
             }
 
             if mode == "eval":

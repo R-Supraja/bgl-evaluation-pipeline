@@ -224,6 +224,15 @@ BUILDERS = {
             },
             "force_overwrite": False,
         },
+        "rf_builder": {
+            "type": "rf_builder",
+            "config": {
+                "window_sec": 10,
+                "progress": DEFAULT_PROGRESS,
+                "log_level": DEFAULT_LOG_LEVEL,
+            },
+            "force_overwrite": False,
+        },
     }
 MODELS = {
         "xgb": {
@@ -296,6 +305,22 @@ MODELS = {
                 "progress": DEFAULT_PROGRESS,
                 "log_level": DEFAULT_LOG_LEVEL,
                 "show_fold_metrics": False,
+            },
+            "force_overwrite": False,
+        },
+        "rf": {
+            "type": "random_forest",
+            "config": {
+                "target_range": GLUCOSE_FILTER,
+                "params": {
+                    "seed": SEED,
+                    "n_estimators": 300,
+                    "max_depth": None,
+                    "min_samples_leaf": 1,
+                },
+                "progress": DEFAULT_PROGRESS,
+                "log_level": DEFAULT_LOG_LEVEL,
+                "show_fold_metrics": True,
             },
             "force_overwrite": False,
         },
@@ -390,8 +415,7 @@ ZEYNALI_PLAN = [
         "processors": ["zeynali_proc"],
         "builders": ["zeynali_builder"],
         "models": ["resnet"],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
     },
 
@@ -400,10 +424,25 @@ ZEYNALI_PLAN = [
         "processors": ["zeynali_proc"],
         "builders": ["zeynali_builder_must"],
         "models": ["resnet"],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
-    }
+    },
+    
+    {
+        "datasets": ["must"],
+        "processors": ["zeynali_proc"],
+        "builders": ["zeynali_builder_must"],
+        "mode": "eval",
+        "eval_model_config": {
+            "dataset": "vitaldb_100",
+            "processor": "zeynali_proc",
+            "builder": "zeynali_builder",
+            "models": ["resnet"],
+            "mode": "train_single",
+            "split_ratio": SPLIT_RATIO,
+        },
+        "force_train": False,
+    },
 
 ]
 
@@ -458,8 +497,7 @@ GUPTA_PLAN = [
         "models": [
             "xgb_std_feat",
         ],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
     },
     {
@@ -469,8 +507,23 @@ GUPTA_PLAN = [
         "models": [
             "xgb_std_feat_nospo",
         ],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
+        "force_train": False,
+    },
+
+    {
+        "datasets": ["must"],
+        "processors": ["sen_gupta_proc"],
+        "builders": ["sen_gupta_builder"],
+        "mode": "eval",
+        "eval_model_config": {
+            "dataset": "vitaldb_100",
+            "processor": "sen_gupta_proc",
+            "builder": "sen_gupta_builder",
+            "models": ["xgb_std_feat_nospo"],
+            "mode": "train_single",
+            "split_ratio": SPLIT_RATIO,
+        },
         "force_train": False,
     },
 
@@ -514,8 +567,7 @@ ISLAM_PLAN = [
         "processors": ["islam_proc"],
         "builders": ["islam_builder"],
         "models": ["pls"],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
     },
     {
@@ -523,10 +575,36 @@ ISLAM_PLAN = [
         "processors": ["islam_proc"],
         "builders": ["islam_builder_must"],
         "models": ["pls"],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
     },
+
+    {
+        "datasets": ["vitaldb_100"],
+        "processors": ["islam_proc"],
+        "builders": ["islam_builder"],
+        "models": ["pls"],
+        "mode": "train_single",
+        "split_ratio": SPLIT_RATIO,
+        "force_train": False,
+    },
+
+    {
+        "datasets": ["must"],
+        "processors": ["islam_proc"],
+        "builders": ["islam_builder_must"],
+        "mode": "eval",
+        "eval_model_config": {
+            "dataset": "vitaldb_100",
+            "processor": "islam_proc",
+            "builder": "islam_builder",
+            "models": ["pls"],
+            "mode": "train_single",
+            "split_ratio": SPLIT_RATIO,
+        },
+        "force_train": False,
+    },
+
 ]
 
 ALGHLAYINI_PLAN = [
@@ -562,13 +640,13 @@ ALGHLAYINI_PLAN = [
         "mode": "train_cv_multi_session",
         "force_train": False,
     },
+
     {
         "datasets": ["vitaldb_100"],
         "processors": ["alghlayini_proc"],
         "builders": ["alghlayini_builder"],
         "models": ["tiny"],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
     },
     {
@@ -576,11 +654,35 @@ ALGHLAYINI_PLAN = [
         "processors": ["alghlayini_proc"],
         "builders": ["alghlayini_builder_must"],
         "models": ["tiny"],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
     },
 
+        {
+        "datasets": ["vitaldb_100"],
+        "processors": ["alghlayini_proc"],
+        "builders": ["alghlayini_builder_must"],
+        "models": ["tiny"],
+        "mode": "train_single",
+        "split_ratio": SPLIT_RATIO,
+        "force_train": False,
+    },
+
+    {
+        "datasets": ["must"],
+        "processors": ["alghlayini_proc"],
+        "builders": ["alghlayini_builder_must"],
+        "mode": "eval",
+        "eval_model_config": {
+            "dataset": "vitaldb_100",
+            "processor": "alghlayini_proc",
+            "builder": "alghlayini_builder_must",
+            "models": ["tiny"],
+            "mode": "train_single",
+            "split_ratio": SPLIT_RATIO,
+        },
+        "force_train": False,
+    },
 ]
 
 PRABHA_PLAN = [
@@ -623,8 +725,7 @@ PRABHA_PLAN = [
         "models": [
             "xgb_mfcc_paper",
         ],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
     },
     {
@@ -634,10 +735,33 @@ PRABHA_PLAN = [
         "models": [
             "xgb_mfcc_paper",
         ],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
     },
+    {
+        "datasets": ["vitaldb_100"],
+        "processors": ["prabha_proc"],
+        "builders": ["prabha_builder"],
+        "models": ["xgb_mfcc_paper"],
+        "mode": "train_single",
+        "split_ratio": SPLIT_RATIO,
+        "force_train": False,
+    },
+    {
+        "datasets": ["must"],
+        "processors": ["prabha_proc"],
+        "builders": ["prabha_builder"],
+        "mode": "eval",
+        "eval_model_config": {
+            "dataset": "vitaldb_100",
+            "processor": "prabha_proc",
+            "builder": "prabha_builder",
+            "models": ["xgb_mfcc_paper"],
+            "mode": "train_single",
+            "split_ratio": SPLIT_RATIO,
+        },
+        "force_train": False,
+    }
 ]
 
 GLOBAL_MEAN_PLAN = [
@@ -662,14 +786,48 @@ GLOBAL_MEAN_PLAN = [
         "processors": ["global_mean_proc"],
         "builders": ["global_mean_builder"],
         "models": ["mean_baseline"],
-        "mode": "train_single_random",
-        "split_ratio": RANDOM_SPLIT_RATIO,
+        "mode": "train_cv_random",
         "force_train": False,
     },
+
+       {
+        "datasets": ["vitaldb_100"],
+        "processors": ["global_mean_proc"],
+        "builders": ["global_mean_builder"],
+        "models": ["mean_baseline"],
+        "mode": "train_single",
+        "split_ratio": SPLIT_RATIO,
+        "force_train": False,
+    },
+    
+    {
+        "datasets": ["must"],
+        "processors": ["global_mean_proc"],
+        "builders": ["global_mean_builder"],
+        "mode": "eval",
+        "eval_model_config": {
+            "dataset": "vitaldb_100",
+            "processor": "global_mean_proc",
+            "builder": "global_mean_builder",
+            "models": ["mean_baseline"],
+            "mode": "train_single",
+            "split_ratio": SPLIT_RATIO,
+        },
+        "force_train": False,
+    }
 ]
 
-ALL_PLANS = ISLAM_PLAN + GUPTA_PLAN + ALGHLAYINI_PLAN + PRABHA_PLAN + ZEYNALI_PLAN + GLOBAL_MEAN_PLAN
-BENCHMARK = {
+
+ALL_PLANS = (
+    ISLAM_PLAN
+    + GUPTA_PLAN
+    + ALGHLAYINI_PLAN
+    + PRABHA_PLAN
+    + ZEYNALI_PLAN
+    + GLOBAL_MEAN_PLAN
+)
+
+PIPELINE = {
     "name": "bench",
     "artifacts_root": "artifacts/bench",
     "datasets": DATASETS,

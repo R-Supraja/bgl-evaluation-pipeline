@@ -146,7 +146,6 @@ class KerasTrainer(Trainer):
             level="debug",
         )
         # Cleanup
-        backend.clear_session()
         gc.collect()
         history_data = history.history if hasattr(history, "history") else history
         # restore input base params
