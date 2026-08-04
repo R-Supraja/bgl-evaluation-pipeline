@@ -88,13 +88,22 @@ Typical outputs include:
 
 ## 8. Methodological Notes
 - The benchmark uses hash-based artifact versioning for cache consistency across configuration changes.
-- Task modes include `train_cv`, `train_cv_multi_session`, and `train_single_random`.
+- Task modes include `train_cv`, `train_cv_multi_session`, and `train_cv_random`.
 - Random seeds and model hyperparameters are centrally defined in `constants.py`.
 
 ## 9. Citation
 If this repository is used in academic work, please cite:
 
-```text
+```
+@misc{ramesh2026reassessing,
+      title={Reassessing the Feasibility of PPG-Based Non-Invasive Blood Glucose Level Estimation}, 
+      author={Ramesh,Supraja and Neufeld, Markus  and K\"uttner, Michael and R\"oddiger, Tobias and Beigl, Michael},
+      year={2026},
+      eprint={2608.01820},
+      archivePrefix={arXiv},
+      primaryClass={cs.HC},
+      url={https://arxiv.org/abs/2608.01820}, 
+}
 ```
 
 ## 10. Contribution
