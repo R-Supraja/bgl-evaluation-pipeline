@@ -95,14 +95,12 @@ Typical outputs include:
 If this repository is used in academic work, please cite:
 
 ```
-@misc{ramesh2026reassessing,
-      title={Reassessing the Feasibility of PPG-Based Non-Invasive Blood Glucose Level Estimation}, 
-      author={Ramesh,Supraja and Neufeld, Markus  and K\"uttner, Michael and R\"oddiger, Tobias and Beigl, Michael},
-      year={2026},
-      eprint={2608.01820},
-      archivePrefix={arXiv},
-      primaryClass={cs.HC},
-      url={https://arxiv.org/abs/2608.01820}, 
+@inproceedings{ramesh2026reassessing,
+  title={Reassessing the Feasibility of PPG-Based Non-Invasive Blood Glucose Level Estimation},
+  author={Ramesh, Supraja and Neufeld, Markus and K{\"u}ttner, Michael and R{\"o}ddiger, Tobias and Beigl, Michael},
+  booktitle={Proceedings of the 2026 ACM International Symposium on Wearable Computers},
+  pages={127--133},
+  year={2026}
 }
 ```
 
